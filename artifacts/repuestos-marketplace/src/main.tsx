@@ -58,7 +58,31 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     headers,
   };
 
-  return originalFetch(target, options);
+  let response = await originalFetch(target, options);
+
+  // SRE Session Stability: If 401 Unauthorized, refresh Clerk token with skipCache: true and silently retry once
+  if (response.status === 401) {
+    try {
+      const clerk = (window as any).Clerk;
+      if (clerk?.session) {
+        const freshToken = await clerk.session.getToken({ skipCache: true });
+        if (freshToken) {
+          cachedClerkToken = freshToken;
+          tokenExpiresAt = Date.now() + 40 * 1000;
+          const retryHeaders = new Headers(headers);
+          retryHeaders.set('Authorization', `Bearer ${freshToken}`);
+          response = await originalFetch(target, {
+            ...options,
+            headers: retryHeaders,
+          });
+        }
+      }
+    } catch (refreshErr) {
+      console.warn('[fetch] Token refresh attempt failed:', refreshErr);
+    }
+  }
+
+  return response;
 };
 
 createRoot(document.getElementById('root')!, {

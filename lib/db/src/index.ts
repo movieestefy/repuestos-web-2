@@ -23,11 +23,13 @@ const cleanConnString = isSupabaseOrSsl
   ? process.env.DATABASE_URL.split("?")[0]
   : process.env.DATABASE_URL;
 
+// High-concurrency configuration for Supabase Transaction Pooler (PgBouncer, Port 6543)
+// Supports up to 2,000 active users with connection throttling and statement timeouts
 export const pool = new Pool({
   connectionString: cleanConnString,
   max: 25,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
   statement_timeout: 10000,
   ssl: isSupabaseOrSsl ? { rejectUnauthorized: false } : undefined,
 });

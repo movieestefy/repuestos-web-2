@@ -221,17 +221,27 @@ export const optionalUser: RequestHandler = async (req, _res, next) => {
 };
 
 export const requireAuth: RequestHandler = async (req, res, next) => {
-  const auth = safeGetAuth(req);
+  let auth: any = null;
+  try {
+    auth = safeGetAuth(req);
+  } catch {
+    res.status(401).json({ error: "TokenExpired", message: "Sesión expirada" });
+    return;
+  }
   if (!auth?.userId) {
-    res.status(401).json({ error: "Debes iniciar sesión para continuar." });
+    res.status(401).json({ error: "TokenExpired", message: "Sesión expirada" });
     return;
   }
   try {
     const user = await resolveUser(auth);
+    if (!user) {
+      res.status(401).json({ error: "TokenExpired", message: "Sesión expirada" });
+      return;
+    }
     (req as RequestWithUser).user = user;
     next();
   } catch (error) {
-    next(error);
+    res.status(401).json({ error: "TokenExpired", message: "Sesión expirada" });
   }
 };
 

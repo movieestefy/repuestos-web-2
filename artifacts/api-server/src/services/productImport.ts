@@ -4,6 +4,9 @@ export interface ParsedProductRow {
   sku: string;
   name: string;
   category: string;
+  brand?: string;
+  compatibleModels?: string;
+  location?: string;
   description: string;
   priceUsd: number;
   stock: number;
@@ -59,20 +62,51 @@ export function parseProductFile(buffer: Buffer): { rows: ParsedProductRow[]; er
     ).trim();
 
     const brand = String(raw["Marca"] || raw["marca"] || raw["Brand"] || "").trim();
-    const app = String(raw["Aplicación"] || raw["Aplicacion"] || raw["Modelo"] || raw["Moto"] || "").trim();
-    let desc = String(raw["Descripción"] || raw["Descripcion"] || raw["Description"] || "").trim();
+    const app = String(
+      raw["Aplica para (Motos)"] ||
+      raw["Aplica para"] ||
+      raw["Modelos"] ||
+      raw["Aplicación"] ||
+      raw["Aplicacion"] ||
+      raw["Modelo"] ||
+      raw["Moto"] ||
+      ""
+    ).trim();
+    const location = String(
+      raw["Ubicación (Pasillo/Estante)"] ||
+      raw["Ubicación"] ||
+      raw["Ubicacion"] ||
+      raw["Pasillo"] ||
+      raw["Estante"] ||
+      raw["Location"] ||
+      ""
+    ).trim();
+    let desc = String(
+      raw["Descripción Breve"] ||
+      raw["Descripción"] ||
+      raw["Descripcion"] ||
+      raw["Description"] ||
+      ""
+    ).trim();
 
-    // Enrich description with Brand and Application if provided
+    // Enrich description with Brand, Application, and Location if provided
     const extras: string[] = [];
     if (brand) extras.push(`Marca: ${brand}`);
     if (app) extras.push(`Aplicación: ${app}`);
+    if (location) extras.push(`Ubicación: ${location}`);
     if (extras.length > 0) {
       desc = desc ? `${desc} (${extras.join(" | ")})` : extras.join(" | ");
     }
 
     // Price USD
     const rawPrice =
-      raw["Precio USD"] ?? raw["Precio"] ?? raw["precio"] ?? raw["priceUsd"] ?? raw["USD"] ?? raw["Precio ($)"];
+      raw["Precio (USD)"] ??
+      raw["Precio USD"] ??
+      raw["Precio"] ??
+      raw["precio"] ??
+      raw["priceUsd"] ??
+      raw["USD"] ??
+      raw["Precio ($)"];
     const cleanedPriceStr = String(rawPrice).replace(/[$,\s]/g, "");
     const priceUsd = Number(cleanedPriceStr);
 
@@ -81,8 +115,14 @@ export function parseProductFile(buffer: Buffer): { rows: ParsedProductRow[]; er
       continue;
     }
 
-    // Stock
-    const rawStock = raw["Stock"] ?? raw["stock"] ?? raw["Cantidad"] ?? raw["cantidad"] ?? 0;
+    // Stock Inicial
+    const rawStock =
+      raw["Stock Inicial"] ??
+      raw["Stock"] ??
+      raw["stock"] ??
+      raw["Cantidad"] ??
+      raw["cantidad"] ??
+      0;
     const stock = Math.max(0, parseInt(String(rawStock), 10) || 0);
 
     // Condition
@@ -100,6 +140,9 @@ export function parseProductFile(buffer: Buffer): { rows: ParsedProductRow[]; er
       sku,
       name,
       category: category || "Repuestos",
+      brand: brand || undefined,
+      compatibleModels: app || undefined,
+      location: location || undefined,
       description: desc || name,
       priceUsd: Math.round(priceUsd * 100) / 100,
       stock,

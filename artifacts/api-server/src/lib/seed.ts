@@ -19,10 +19,19 @@ export async function ensureMarketplaceSeed() {
     await db.execute(sql`
       ALTER TABLE "part_requests" ADD COLUMN IF NOT EXISTS "assigned_merchant_id" text;
       ALTER TABLE "part_requests" ADD COLUMN IF NOT EXISTS "sale_amount_usd" numeric(14, 2);
+      ALTER TABLE "part_requests" ADD COLUMN IF NOT EXISTS "customer_id" text;
+      ALTER TABLE "part_requests" ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone DEFAULT now();
+      ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "brand" text;
+      ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "compatible_models" text;
+      ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "location" text;
+      ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "idempotency_key" text;
+      ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "expires_at" timestamp with time zone;
+      ALTER TABLE "order_items" ADD COLUMN IF NOT EXISTS "merchant_id" uuid;
+      ALTER TABLE "payments" ADD COLUMN IF NOT EXISTS "receipt_file_id" text;
     `);
   } catch (err) {
     // Non-fatal if table doesn't exist yet or columns already exist
-    console.warn("Notice: part_requests migration check:", err);
+    console.warn("Notice: schema migration check:", err);
   }
 
   const [master] = await db.select().from(usersTable).where(eq(usersTable.email, masterEmail)).limit(1);

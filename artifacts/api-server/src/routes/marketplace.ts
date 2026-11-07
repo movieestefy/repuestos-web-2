@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import crypto from "node:crypto";
 import multer from "multer";
 import { and, count, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import {
@@ -411,6 +412,45 @@ router.put("/payment-receiver", requireAuth, adminLimiter, async (req, res, next
       return;
     }
     const body = UpdatePaymentReceiverBody.parse(req.body);
+
+    let verifiedQrSha256 = (body as any).qrSha256 || null;
+    const qrImageData = (body as any).qrImageData;
+
+    if (qrImageData) {
+      // Validate Base64 image format: strictly png, jpeg, jpg, or webp (SVG or external URLs prohibited)
+      if (!/^data:image\/(png|jpeg|jpg|webp);base64,/.test(qrImageData)) {
+        res.status(400).json({
+          error: "Formato de QR inválido. Debe ser una imagen PNG, JPG o WEBP en formato Base64.",
+        });
+        return;
+      }
+
+      // Validate payload size (< 600 KB raw binary, approx 800 KB base64)
+      if (qrImageData.length > 800_000) {
+        res.status(400).json({
+          error: "La imagen del código QR excede el límite de 600 KB permitido.",
+        });
+        return;
+      }
+
+      // Cryptographic verification: compute SHA-256
+      const computedHash = crypto.createHash("sha256").update(qrImageData).digest("hex");
+      if (verifiedQrSha256 && verifiedQrSha256.toLowerCase() !== computedHash.toLowerCase()) {
+        res.status(400).json({
+          error: "Alteración de seguridad detectada: El hash SHA-256 no coincide con los datos del código QR.",
+        });
+        return;
+      }
+      verifiedQrSha256 = computedHash;
+    }
+
+    const payload = {
+      ...body,
+      qrImageData: qrImageData || null,
+      qrSha256: verifiedQrSha256,
+      allowClipboardCopy: (body as any).allowClipboardCopy ?? true,
+    };
+
     const [current] = await db
       .select()
       .from(paymentReceiverSettingsTable)
@@ -420,12 +460,12 @@ router.put("/payment-receiver", requireAuth, adminLimiter, async (req, res, next
     const [receiver] = current
       ? await db
           .update(paymentReceiverSettingsTable)
-          .set({ ...body, updatedBy: user?.id ?? null, updatedAt: new Date() })
+          .set({ ...payload, updatedBy: user?.id ?? null, updatedAt: new Date() })
           .where(eq(paymentReceiverSettingsTable.id, current.id))
           .returning()
       : await db
           .insert(paymentReceiverSettingsTable)
-          .values({ ...body, updatedBy: user?.id ?? null, isActive: true })
+          .values({ ...payload, updatedBy: user?.id ?? null, isActive: true })
           .returning();
 
     res.json(receiver);
@@ -715,6 +755,9 @@ router.post("/products/import", requireAuth, upload.single("file"), async (req, 
           sku: r.sku,
           name: r.name,
           category: r.category,
+          brand: r.brand || null,
+          compatibleModels: r.compatibleModels || null,
+          location: r.location || null,
           description: r.description,
           priceUsd: r.priceUsd,
           stock: r.stock,
@@ -726,6 +769,9 @@ router.post("/products/import", requireAuth, upload.single("file"), async (req, 
           set: {
             name: r.name,
             category: r.category,
+            brand: r.brand || null,
+            compatibleModels: r.compatibleModels || null,
+            location: r.location || null,
             description: r.description,
             priceUsd: r.priceUsd,
             stock: r.stock,
@@ -849,6 +895,25 @@ router.post("/orders", optionalUser, checkoutAndPaymentLimiter, async (req, res,
   try {
     const body = CreateOrderBody.parse(req.body);
     const user = (req as RequestWithUser).user;
+
+    // Idempotency Protection: Prevent duplicate orders from network retries or double clicks
+    const idempotencyKey =
+      (req.headers["x-idempotency-key"] as string) ||
+      (req.body as any)?.idempotencyKey ||
+      null;
+
+    if (idempotencyKey) {
+      const [existingOrder] = await db
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.idempotencyKey, idempotencyKey))
+        .limit(1);
+
+      if (existingOrder) {
+        res.status(200).json(await decorateOrder(existingOrder));
+        return;
+      }
+    }
 
     // Inventory Hoarding Protection: Maximum 2 unpaid orders per user
     if (user?.id) {
@@ -977,17 +1042,20 @@ router.post("/orders", optionalUser, checkoutAndPaymentLimiter, async (req, res,
           customerPhone: body.customerPhone,
           deliveryCity: body.deliveryCity,
           pickupNotes: body.pickupNotes ?? null,
+          idempotencyKey: idempotencyKey ?? null,
+          expiresAt: new Date(Date.now() + 45 * 60 * 1000), // 45-minute reservation TTL
           totalUsd,
           totalBs,
           exchangeRate: rateValue,
         })
         .returning();
 
-      // Insert line items bound to the new order
+      // Insert line items bound to the new order with merchantId for direct indexing
       await tx.insert(orderItemsTable).values(
         itemsToInsert.map((item) => ({
           ...item,
           orderId: newOrder.id,
+          merchantId: lockedProducts.get(item.productId)?.merchantId ?? null,
         }))
       );
 
@@ -1434,6 +1502,7 @@ router.post("/payments", requireAuth, checkoutAndPaymentLimiter, async (req, res
         phone: body.phone,
         amountBs: submittedAmount,
         receiptUrl,
+        receiptFileId: (req.body as any)?.receiptFileId || null,
         status: "pending",
       })
       .returning();
@@ -2259,7 +2328,7 @@ router.post("/part-requests", async (req, res, next) => {
   }
 });
 
-router.get("/part-requests", requireAuth, async (req, res, next) => {
+const listPartRequestsHandler = async (req: any, res: any, next: any) => {
   try {
     const user = (req as RequestWithUser).user;
     if (user?.role !== "admin" && user?.role !== "merchant") {
@@ -2320,9 +2389,9 @@ router.get("/part-requests", requireAuth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+};
 
-router.patch("/part-requests/:requestId", requireAuth, async (req, res, next) => {
+const updatePartRequestHandler = async (req: any, res: any, next: any) => {
   try {
     const user = (req as RequestWithUser).user;
     if (user?.role !== "admin" && user?.role !== "merchant") {
@@ -2368,7 +2437,7 @@ router.patch("/part-requests/:requestId", requireAuth, async (req, res, next) =>
         .from(exchangeRatesTable)
         .where(eq(exchangeRatesTable.effectiveDate, today()))
         .limit(1);
-      const rateVal = todayRate ? Number(todayRate.rate) : 50;
+      const rateVal = todayRate ? Number(todayRate.value) : 50;
       const totalBs = Math.round(parsedUsd * rateVal * 100) / 100;
 
       const [merchant] = await db
@@ -2443,6 +2512,11 @@ router.patch("/part-requests/:requestId", requireAuth, async (req, res, next) =>
   } catch (error) {
     next(error);
   }
-});
+};
+
+router.get("/part-requests", requireAuth, listPartRequestsHandler);
+router.get("/admin/part-requests", requireAuth, listPartRequestsHandler);
+router.patch("/part-requests/:requestId", requireAuth, updatePartRequestHandler);
+router.patch("/admin/part-requests/:requestId/status", requireAuth, updatePartRequestHandler);
 
 export default router;

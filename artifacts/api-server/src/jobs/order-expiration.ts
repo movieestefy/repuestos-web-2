@@ -12,7 +12,7 @@ import { db, orderItemsTable, ordersTable, paymentsTable, productsTable } from "
 import { logger } from "../lib/logger";
 
 const EXPIRATION_WINDOW_MS = 45 * 60 * 1000; // 45 minutes threshold
-const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Run every 5 minutes
+const CHECK_INTERVAL_MS = 3 * 60 * 1000; // Run every 3 minutes (SRE anti-hoarding worker)
 
 /**
  * Sweeps the database for orders still pending payment past the 45-minute TTL.

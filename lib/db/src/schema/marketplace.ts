@@ -55,6 +55,9 @@ export const productsTable = pgTable("products", {
   name: text("name").notNull(),
   sku: text("sku").notNull(),
   category: text("category").notNull(),
+  brand: text("brand"),
+  compatibleModels: text("compatible_models"),
+  location: text("location"),
   description: text("description").notNull().default(""),
   priceUsd: numeric("price_usd", { precision: 14, scale: 2, mode: "number" }).notNull(),
   stock: integer("stock").notNull().default(0),
@@ -66,6 +69,7 @@ export const productsTable = pgTable("products", {
 }, (table) => ({
   merchantSkuUnique: uniqueIndex("products_merchant_sku_unique").on(table.merchantId, table.sku),
   productsCategoryIsVisibleIdx: index("products_category_is_visible_idx").on(table.category, table.isVisible),
+  productsMerchantIdIsVisibleIdx: index("products_merchant_id_is_visible_idx").on(table.merchantId, table.isVisible),
 }));
 
 export const ordersTable = pgTable("orders", {
@@ -79,21 +83,27 @@ export const ordersTable = pgTable("orders", {
   exchangeRate: numeric("exchange_rate", { precision: 14, scale: 4, mode: "number" }).notNull(),
   deliveryCity: text("delivery_city").notNull().default("Barinas"),
   pickupNotes: text("pickup_notes"),
+  idempotencyKey: text("idempotency_key"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   ordersCustomerIdStatusIdx: index("orders_customer_id_status_idx").on(table.customerId, table.status),
   ordersStatusCreatedAtIdx: index("orders_status_created_at_idx").on(table.status, table.createdAt),
+  ordersIdempotencyKeyUnique: uniqueIndex("orders_idempotency_key_unique").on(table.idempotencyKey),
 }));
 
 export const orderItemsTable = pgTable("order_items", {
   id: uuid("id").defaultRandom().primaryKey(),
   orderId: uuid("order_id").notNull(),
   productId: uuid("product_id").notNull(),
+  merchantId: uuid("merchant_id"),
   productName: text("product_name").notNull(),
   quantity: integer("quantity").notNull(),
   unitPriceUsd: numeric("unit_price_usd", { precision: 14, scale: 2, mode: "number" }).notNull(),
   subtotalUsd: numeric("subtotal_usd", { precision: 14, scale: 2, mode: "number" }).notNull(),
-});
+}, (table) => ({
+  orderItemsMerchantIdIdx: index("order_items_merchant_id_idx").on(table.merchantId),
+}));
 
 export const paymentsTable = pgTable("payments", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -104,6 +114,7 @@ export const paymentsTable = pgTable("payments", {
   phone: text("phone").notNull(),
   amountBs: numeric("amount_bs", { precision: 14, scale: 2, mode: "number" }).notNull(),
   receiptUrl: text("receipt_url"),
+  receiptFileId: text("receipt_file_id"),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
@@ -151,6 +162,7 @@ export const orderRatingsTable = pgTable("order_ratings", {
 
 export const partRequestsTable = pgTable("part_requests", {
   id: uuid("id").defaultRandom().primaryKey(),
+  customerId: text("customer_id"),
   customerName: text("customer_name").notNull(),
   contactPhone: text("contact_phone").notNull(),
   partDescription: text("part_description").notNull(),
@@ -159,6 +171,7 @@ export const partRequestsTable = pgTable("part_requests", {
   assignedMerchantId: text("assigned_merchant_id"),
   saleAmountUsd: numeric("sale_amount_usd", { precision: 14, scale: 2, mode: "number" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   statusCreatedAtIdx: index("part_requests_status_created_at_idx").on(table.status, table.createdAt),
 }));
@@ -173,7 +186,7 @@ export const insertPaymentSchema = createInsertSchema(paymentsTable).omit({ id: 
 export const insertPaymentReceiverSettingsSchema = createInsertSchema(paymentReceiverSettingsTable).omit({ id: true, updatedAt: true });
 export const insertDeliveryLocationSchema = createInsertSchema(deliveryLocationsTable).omit({ id: true, createdAt: true });
 export const insertOrderRatingSchema = createInsertSchema(orderRatingsTable).omit({ id: true, createdAt: true });
-export const insertPartRequestSchema = createInsertSchema(partRequestsTable).omit({ id: true, createdAt: true });
+export const insertPartRequestSchema = createInsertSchema(partRequestsTable).omit({ id: true, createdAt: true, updatedAt: true });
 
 export const insertMerchantProfileSchema = createInsertSchema(merchantsTable).pick({
   businessName: true,

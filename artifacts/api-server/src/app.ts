@@ -24,6 +24,18 @@ app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
     crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: [
+          "'self'",
+          "data:",
+          "https://images.unsplash.com",
+          "https://drive.google.com",
+          "https://*.googleusercontent.com",
+        ],
+      },
+    },
   })
 );
 
@@ -96,8 +108,15 @@ app.use(
   }),
 );
 
-// Payload limit: Allow up to 10mb for receipts, images and CSV/Excel uploads
-app.use(express.json({ limit: "10mb" }));
+// Selective payload limits: 50kb for general API endpoints, 10mb for file uploads, receipts, and imports
+app.use((req, res, next) => {
+  const isLargePayload =
+    req.path.includes("/upload-receipt") ||
+    req.path.includes("/products/import") ||
+    req.path.includes("/payment-receiver");
+  const limit = isLargePayload ? "10mb" : "50kb";
+  express.json({ limit })(req, res, next);
+});
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Rate limiting: Global tier for all API endpoints

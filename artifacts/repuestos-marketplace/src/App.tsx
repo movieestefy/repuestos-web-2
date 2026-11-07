@@ -186,7 +186,7 @@ function ClerkAuthSync() {
   const client = useQueryClient();
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
-  const lastSignedInRef = useRef<boolean | null>(null);
+  const lastSignedInRef = useRef<boolean | null | undefined>(null);
 
   useEffect(() => {
     if (lastSignedInRef.current === isSignedIn) return;

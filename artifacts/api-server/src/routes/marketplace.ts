@@ -1041,7 +1041,12 @@ router.get("/orders/:orderId", requireAuth, async (req, res, next) => {
       return;
     }
 
-    // Customer can only view their own order
+    // Customer can only view their own order (or claim unassigned order)
+    if (!order.customerId && user?.id) {
+      await db.update(ordersTable).set({ customerId: user.id }).where(eq(ordersTable.id, order.id));
+      order.customerId = user.id;
+    }
+
     if (order.customerId !== user?.id) {
       res.status(403).json({ error: "No puedes consultar este pedido." });
       return;
@@ -1347,8 +1352,16 @@ router.post("/payments", requireAuth, checkoutAndPaymentLimiter, async (req, res
     }
 
     // Anti-fraud check 2: Verify user ownership or admin privilege
-    const isOwner = order.customerId === user.id;
+    let isOwner = order.customerId === user.id;
     const isAdmin = user.role === "admin";
+
+    // If order was created without a customer id, bind it to the paying authenticated user
+    if (!order.customerId && user.id) {
+      await db.update(ordersTable).set({ customerId: user.id }).where(eq(ordersTable.id, order.id));
+      order.customerId = user.id;
+      isOwner = true;
+    }
+
     if (!isOwner && !isAdmin) {
       res.status(403).json({ error: "No tienes permiso para reportar el pago de este pedido." });
       return;

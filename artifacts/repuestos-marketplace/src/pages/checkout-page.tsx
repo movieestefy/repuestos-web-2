@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { Link, useLocation } from 'wouter';
+import { useUser } from '@clerk/react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -30,6 +31,7 @@ import {
   ShoppingCart,
 } from 'lucide-react';
 import {
+  getGetCurrentUserQueryKey,
   getGetOrderQueryKey,
   getGetPaymentReceiverQueryKey,
   getGetTodayRateQueryKey,
@@ -37,6 +39,7 @@ import {
   getListOrdersQueryKey,
   getListPaymentsQueryKey,
   useCreateOrder,
+  useGetCurrentUser,
   useGetPaymentReceiver,
   useGetTodayRate,
   useListDeliveryLocations,
@@ -165,11 +168,24 @@ export default function CheckoutPage() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
 
+  const { user: clerkUser } = useUser();
+  const { data: user } = useGetCurrentUser({
+    query: { queryKey: getGetCurrentUserQueryKey(), retry: false },
+  });
+
   const [order, setOrder] = useState<Order | null>(null);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [deliveryCity, setDeliveryCity] = useState('Barinas');
   const [notes, setNotes] = useState('');
+
+  // Prefill name from logged in session
+  useEffect(() => {
+    if (!name) {
+      if (user?.name) setName(user.name);
+      else if (clerkUser?.fullName) setName(clerkUser.fullName);
+    }
+  }, [user, clerkUser, name]);
 
   // Structured Mobile Payment inputs with instant visual validation
   const [bank, setBank] = useState('');

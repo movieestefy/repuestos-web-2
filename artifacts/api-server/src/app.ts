@@ -90,13 +90,10 @@ const clerkSecretKey = process.env.CLERK_SECRET_KEY || DEFAULT_CLERK_SECRET_KEY;
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      clerkPublishableKey,
-    ),
+  clerkMiddleware({
+    publishableKey: clerkPublishableKey,
     secretKey: clerkSecretKey,
-  })),
+  }),
 );
 
 // Payload limit: Allow up to 10mb for receipts, images and CSV/Excel uploads

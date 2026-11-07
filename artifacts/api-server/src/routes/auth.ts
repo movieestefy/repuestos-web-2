@@ -24,7 +24,9 @@ interface CachedResolvedUser {
 const RESOLVED_USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
 const resolvedUserCache = new Map<string, CachedResolvedUser>();
 
-export const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+const DEFAULT_CLERK_SECRET_KEY = "sk_test_ISfR1sQtUfPBhoqg4THFjG4ZebQfMfoOPYOR4xbVe7";
+const clerkSecretKey = process.env.CLERK_SECRET_KEY || DEFAULT_CLERK_SECRET_KEY;
+export const clerk = createClerkClient({ secretKey: clerkSecretKey });
 
 /**
  * Purgado e invalidación inmediata de caché de usuario (Zero-Latency Privilege Propagation).

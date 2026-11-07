@@ -77,38 +77,27 @@ app.use(
       return callback(null, origin);
     },
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   })
 );
 
-const isClerkConfigured = Boolean(
-  process.env.CLERK_PUBLISHABLE_KEY &&
-  process.env.CLERK_PUBLISHABLE_KEY.startsWith("pk_") &&
-  !process.env.CLERK_PUBLISHABLE_KEY.includes("placeholder")
-);
+const DEFAULT_CLERK_PUBLISHABLE_KEY = "pk_test_ZmFzdC1sYWItODQzNS5jbGVyay5hY2NvdW50cy5kZXYk";
+const DEFAULT_CLERK_SECRET_KEY = "sk_test_ISfR1sQtUfPBhoqg4THFjG4ZebQfMfoOPYOR4xbVe7";
 
-if (isClerkConfigured) {
-  app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
-  app.use(
-    clerkMiddleware((req) => ({
-      publishableKey: publishableKeyFromHost(
-        getClerkProxyHost(req) ?? "",
-        process.env.CLERK_PUBLISHABLE_KEY,
-      ),
-    })),
-  );
-} else {
-  // Graceful development mode when Clerk API keys are not yet provided
-  app.use((req, _res, next) => {
-    (req as any).auth = {
-      userId: "master-seed:alexaelperdomo2410@gmail.com",
-      sessionClaims: {
-        email: "alexaelperdomo2410@gmail.com",
-        name: "Admin Master",
-      },
-    };
-    next();
-  });
-}
+const clerkPublishableKey = process.env.CLERK_PUBLISHABLE_KEY || DEFAULT_CLERK_PUBLISHABLE_KEY;
+const clerkSecretKey = process.env.CLERK_SECRET_KEY || DEFAULT_CLERK_SECRET_KEY;
+
+app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+app.use(
+  clerkMiddleware((req) => ({
+    publishableKey: publishableKeyFromHost(
+      getClerkProxyHost(req) ?? "",
+      clerkPublishableKey,
+    ),
+    secretKey: clerkSecretKey,
+  })),
+);
 
 // Payload limit: Allow up to 10mb for receipts, images and CSV/Excel uploads
 app.use(express.json({ limit: "10mb" }));

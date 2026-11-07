@@ -8,11 +8,12 @@
  */
 
 import { lazy, Suspense, useEffect, useRef } from 'react';
-import { ClerkProvider, useClerk } from '@clerk/react';
+import { ClerkProvider, useAuth, useClerk } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { Route, Router as WouterRouter, Switch, useLocation } from 'wouter';
+import { getGetCurrentUserQueryKey, setAuthTokenGetter } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { AppFrame } from '@/components/layout/app-frame';
 import { CartProvider } from '@/lib/cart-context';
@@ -178,6 +179,30 @@ function ClerkQueryClientCacheInvalidator() {
   return null;
 }
 
+function ClerkAuthSync() {
+  const { getToken, isSignedIn } = useAuth();
+  const client = useQueryClient();
+
+  useEffect(() => {
+    if (isSignedIn) {
+      setAuthTokenGetter(async () => {
+        try {
+          return await getToken();
+        } catch {
+          return null;
+        }
+      });
+      // Invalidate current user query to load database profile with the token
+      client.invalidateQueries({ queryKey: getGetCurrentUserQueryKey() });
+    } else {
+      setAuthTokenGetter(null);
+      client.setQueryData(getGetCurrentUserQueryKey(), null);
+    }
+  }, [getToken, isSignedIn, client]);
+
+  return null;
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Clerk provider with appearance theming                                    */
 /* -------------------------------------------------------------------------- */
@@ -255,6 +280,7 @@ function ClerkProviderWithRoutes() {
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
       <ClerkQueryClientCacheInvalidator />
+      <ClerkAuthSync />
       <RoutedApp />
     </ClerkProvider>
   );

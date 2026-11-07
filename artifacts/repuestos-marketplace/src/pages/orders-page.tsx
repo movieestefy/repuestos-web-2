@@ -4,13 +4,20 @@
  * item counts, order totals in USD and Bs., and direct link to order tracking details.
  */
 
-import { Link } from 'wouter';
+import { Link, useLocation } from 'wouter';
 import {
   ArrowRight,
   ClipboardList,
+  LogIn,
   ShoppingCart,
 } from 'lucide-react';
-import { useListOrders } from '@workspace/api-client-react';
+import {
+  getGetCurrentUserQueryKey,
+  getListOrdersQueryKey,
+  useGetCurrentUser,
+  useListOrders,
+} from '@workspace/api-client-react';
+import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
 import { OrderRow } from '@/components/shared/order-row';
@@ -19,8 +26,55 @@ import { OrderRow } from '@/components/shared/order-row';
  * Orders history page for customer tracking of past and active purchases.
  */
 export default function OrdersPage() {
-  const query = useListOrders({ page: 1, pageSize: 30 });
+  const [, setLocation] = useLocation();
+  const { data: user, isLoading: isUserLoading } = useGetCurrentUser({
+    query: { queryKey: getGetCurrentUserQueryKey(), retry: false },
+  });
+
+  const query = useListOrders(
+    { page: 1, pageSize: 30 },
+    {
+      query: {
+        queryKey: getListOrdersQueryKey({ page: 1, pageSize: 30 }),
+        enabled: Boolean(user),
+      },
+    },
+  );
   const orders = query.data?.items ?? [];
+
+  if (!isUserLoading && !user) {
+    return (
+      <div className="mx-auto max-w-[600px] px-4 py-20 text-center sm:px-6">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-secondary/15 text-primary">
+          <ClipboardList className="h-8 w-8 text-secondary" />
+        </div>
+        <h1 className="mt-6 font-display text-3xl font-bold tracking-tight">
+          Inicia sesión para ver tus pedidos
+        </h1>
+        <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+          Tus compras y estados de entrega están vinculados a tu cuenta personal. Inicia sesión para ver el historial y hacer seguimiento a tus repuestos.
+        </p>
+        <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+          <Button
+            type="button"
+            onClick={() => setLocation('/sign-in?redirect_url=/orders')}
+            className="gap-2"
+          >
+            <LogIn className="h-4 w-4" />
+            <span>Iniciar sesión</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setLocation('/')}
+            className="gap-2"
+          >
+            <span>Volver al catálogo</span>
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 py-10 sm:px-6 lg:py-14">

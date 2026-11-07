@@ -2,6 +2,8 @@
  * Settings page for account info, daily exchange rate, payment receivers, delivery locations, and user role management.
  */
 import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation } from 'wouter';
+import { useClerk } from '@clerk/react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getGetCurrentUserQueryKey,
@@ -30,6 +32,8 @@ import {
   Eye,
   Loader2,
   LockKeyhole,
+  LogIn,
+  LogOut,
   MapPin,
   Phone,
   Plus,
@@ -39,6 +43,7 @@ import {
   Trash2,
   Truck,
   Upload,
+  UserCheck,
   UserCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -46,6 +51,8 @@ import { NoticeBar, type Notice } from '@/components/shared/notice-bar';
 import { dateLabel } from '@/lib/formatters';
 
 export default function SettingsPage() {
+  const { signOut, openUserProfile } = useClerk();
+  const [, setLocation] = useLocation();
   const { data: user } = useGetCurrentUser({
     query: { queryKey: getGetCurrentUserQueryKey(), retry: false },
   });
@@ -71,6 +78,16 @@ export default function SettingsPage() {
   const createLocation = useCreateDeliveryLocation();
   const updateRole = useUpdateUserRole();
   const client = useQueryClient();
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (err) {
+      console.error('Error signing out:', err);
+    }
+    client.clear();
+    setLocation('/');
+  };
 
   const [value, setValue] = useState('');
   const [bank, setBank] = useState('');
@@ -362,6 +379,45 @@ export default function SettingsPage() {
                 <ShieldCheck className="h-4 w-4 text-accent" />
                 {user?.isMaster ? 'Admin Master' : user?.role ?? 'Cliente'}
               </p>
+            </div>
+
+            <div className="mt-2 flex flex-wrap gap-3 pt-5 border-t border-border sm:col-span-2">
+              {user ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openUserProfile?.()}
+                    className="gap-2"
+                    data-testid="button-settings-clerk-profile"
+                  >
+                    <UserCheck className="h-4 w-4 text-accent" />
+                    <span>Ajustes del perfil y seguridad</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSignOut}
+                    className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    data-testid="button-settings-logout"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    <span>Cerrar sesión</span>
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={() => setLocation('/sign-in')}
+                  className="gap-2"
+                  data-testid="button-settings-login"
+                >
+                  <LogIn className="h-4 w-4" />
+                  <span>Iniciar sesión</span>
+                </Button>
+              )}
             </div>
           </div>
         </section>

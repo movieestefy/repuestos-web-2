@@ -51,6 +51,7 @@ import { useCart } from '@/lib/cart-context';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { NoticeBar, type Notice } from '@/components/shared/notice-bar';
+import { getReceiptImageSrc } from '@/components/shared/receipt-modal';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -199,6 +200,7 @@ export default function CheckoutPage() {
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState<boolean>(false);
   const [uploadedReceiptUrl, setUploadedReceiptUrl] = useState<string | null>(null);
+  const [receiptBase64, setReceiptBase64] = useState<string | null>(null);
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -456,7 +458,7 @@ export default function CheckoutPage() {
           reference: cleanRef,
           phone: `${phonePrefix}${cleanPhone}`,
           amountBs: order.totalBs,
-          receiptUrl: uploadedReceiptUrl || null,
+          receiptUrl: uploadedReceiptUrl || receiptBase64 || null,
         },
       },
       {
@@ -1180,6 +1182,7 @@ export default function CheckoutPage() {
                       reader.onload = async () => {
                         try {
                           const base64Data = reader.result as string;
+                          setReceiptBase64(base64Data);
                           const res = await fetch('/api/payments/upload-receipt', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -1192,11 +1195,13 @@ export default function CheckoutPage() {
                           const data = await res.json();
                           if (data.webViewLink) {
                             setUploadedReceiptUrl(data.webViewLink);
-                            notify({ tone: 'success', text: 'Comprobante subido a Google Drive correctamente.' });
+                            notify({ tone: 'success', text: 'Comprobante guardado en Google Drive correctamente.' });
+                          } else {
+                            notify({ tone: 'success', text: 'Captura guardada para adjuntar al pedido.' });
                           }
                         } catch (err) {
-                          console.error('Error al subir comprobante:', err);
-                          notify({ tone: 'error', text: 'Error al subir la captura a Google Drive.' });
+                          console.error('Error al subir comprobante a Google Drive:', err);
+                          notify({ tone: 'info', text: 'Captura adjuntada al pedido correctamente.' });
                         } finally {
                           setUploadingReceipt(false);
                         }
@@ -1209,20 +1214,24 @@ export default function CheckoutPage() {
                   {uploadingReceipt && (
                     <p key="text-receipt-uploading" className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
-                      <span>Subiendo captura a Google Drive...</span>
+                      <span>Procesando y guardando captura...</span>
                     </p>
                   )}
-                  {uploadedReceiptUrl && (
-                    <div key="link-receipt-uploaded" className="flex items-center gap-2 text-xs">
-                      <a
-                        href={uploadedReceiptUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-accent underline hover:opacity-80 flex items-center gap-1"
-                      >
-                        <Eye className="h-3.5 w-3.5 shrink-0" />
-                        <span>Ver comprobante subido</span>
-                      </a>
+                  {(receiptBase64 || uploadedReceiptUrl) && (
+                    <div className="mt-2 flex items-center gap-3 rounded-lg border border-accent/25 bg-muted/40 p-2">
+                      <img
+                        src={receiptBase64 || getReceiptImageSrc(uploadedReceiptUrl) || ''}
+                        alt="Vista previa de captura"
+                        className="h-12 w-12 rounded object-cover border border-border shadow-xs"
+                      />
+                      <div className="flex-1 min-w-0 text-xs">
+                        <p className="font-semibold text-foreground truncate">
+                          {receiptFile?.name || 'Comprobante adjunto'}
+                        </p>
+                        <p className="text-[11px] text-emerald-600 font-medium">
+                          {uploadedReceiptUrl ? '✓ Guardado en Google Drive' : '✓ Captura lista para enviar'}
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>

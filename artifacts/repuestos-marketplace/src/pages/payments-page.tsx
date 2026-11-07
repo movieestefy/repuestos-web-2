@@ -17,6 +17,7 @@ import { Link } from 'wouter';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
+import { ReceiptThumbnailButton } from '@/components/shared/receipt-modal';
 import { bs, dateLabel, statusClass, statusLabel } from '@/lib/formatters';
 
 export default function PaymentsPage() {
@@ -156,21 +157,11 @@ export default function PaymentsPage() {
                       </Badge>
                     </td>
                     <td className="px-5 py-4">
-                      {payment.receiptUrl ? (
-                        <a
-                          href={payment.receiptUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent hover:bg-accent/20"
-                          data-testid={`btn-view-receipt-${payment.id}`}
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                          <span>Ver captura</span>
-                          <ExternalLink className="h-3 w-3 opacity-70" />
-                        </a>
-                      ) : (
-                        <span className="text-xs text-muted-foreground italic">Sin captura</span>
-                      )}
+                      <ReceiptThumbnailButton
+                        receiptUrl={payment.receiptUrl}
+                        reference={payment.reference}
+                        bank={payment.bank}
+                      />
                     </td>
                     <td className="px-5 py-4 text-xs text-muted-foreground">
                       {dateLabel(payment.createdAt)}

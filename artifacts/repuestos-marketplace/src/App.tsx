@@ -49,6 +49,8 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
+      staleTime: 30 * 1000, // 30s cache prevents endless refetches and UI freezes
+      gcTime: 5 * 60 * 1000,
     },
   },
 });
@@ -182,23 +184,29 @@ function ClerkQueryClientCacheInvalidator() {
 function ClerkAuthSync() {
   const { getToken, isSignedIn } = useAuth();
   const client = useQueryClient();
+  const getTokenRef = useRef(getToken);
+  getTokenRef.current = getToken;
+  const lastSignedInRef = useRef<boolean | null>(null);
 
   useEffect(() => {
+    if (lastSignedInRef.current === isSignedIn) return;
+    lastSignedInRef.current = isSignedIn;
+
     if (isSignedIn) {
       setAuthTokenGetter(async () => {
         try {
-          return await getToken();
+          return await getTokenRef.current();
         } catch {
           return null;
         }
       });
-      // Invalidate current user query to load database profile with the token
+      // Invalidate once on sign-in transition
       client.invalidateQueries({ queryKey: getGetCurrentUserQueryKey() });
     } else {
       setAuthTokenGetter(null);
       client.setQueryData(getGetCurrentUserQueryKey(), null);
     }
-  }, [getToken, isSignedIn, client]);
+  }, [isSignedIn, client]);
 
   return null;
 }

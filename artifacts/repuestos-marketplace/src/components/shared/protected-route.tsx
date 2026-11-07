@@ -19,8 +19,8 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
     query: { queryKey: getGetCurrentUserQueryKey(), retry: 1 },
   });
 
-  // 1. Wait while Clerk or backend auth state is initializing
-  if (!isClerkLoaded || (isSignedIn && isUserLoading && !user)) {
+  // 1. Wait while Clerk auth state is initializing (never block if Clerk user is already in memory)
+  if (!isClerkLoaded || (isSignedIn && !clerkUser && isUserLoading)) {
     return <PageLoader />;
   }
 

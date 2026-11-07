@@ -6,10 +6,38 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import './index.css';
 
 // Automatically route API requests to remote backend in production if VITE_API_URL is configured
-// and inject Clerk Authorization bearer token across origins
+// and inject Clerk Authorization bearer token across origins without blocking
 const apiUrl = import.meta.env.VITE_API_URL;
 const cleanApiUrl = apiUrl ? apiUrl.replace(/\/+$/, '') : '';
 const originalFetch = window.fetch;
+
+let cachedClerkToken: string | null = null;
+let tokenExpiresAt = 0;
+
+async function getFastClerkToken(): Promise<string | null> {
+  const now = Date.now();
+  if (cachedClerkToken && now < tokenExpiresAt) {
+    return cachedClerkToken;
+  }
+
+  try {
+    const clerk = (window as any).Clerk;
+    if (!clerk?.session) return null;
+
+    // Strict 1000ms timeout so a slow token fetch never hangs the web app
+    const tokenPromise = clerk.session.getToken();
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000));
+    const token = (await Promise.race([tokenPromise, timeoutPromise])) as string | null;
+
+    if (token) {
+      cachedClerkToken = token;
+      tokenExpiresAt = now + 40 * 1000; // Cache valid for 40 seconds
+    }
+    return token || cachedClerkToken;
+  } catch {
+    return cachedClerkToken;
+  }
+}
 
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   let target = input;
@@ -17,16 +45,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     target = `${cleanApiUrl}${input}`;
   }
 
-  // Retrieve Clerk session token if available in the browser window
-  let token: string | null = null;
-  try {
-    const clerk = (window as any).Clerk;
-    if (clerk?.session) {
-      token = await clerk.session.getToken();
-    }
-  } catch {
-    // Ignore error if Clerk session is not initialized
-  }
+  const token = await getFastClerkToken();
 
   const headers = new Headers(init?.headers);
   if (token && !headers.has('Authorization') && !headers.has('authorization')) {

@@ -61,45 +61,56 @@ export async function uploadReceiptToDrive(
     };
   }
 
-  const stream = new Readable();
-  stream.push(buffer);
-  stream.push(null);
-
-  const fileMetadata: any = {
-    name: `comprobante-ruta44-${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`,
-  };
-  if (folderId) {
-    fileMetadata.parents = [folderId];
-  }
-
-  const res = await drive.files.create({
-    requestBody: fileMetadata,
-    media: {
-      mimeType,
-      body: stream,
-    },
-    fields: "id, webViewLink, webContentLink",
-  });
-
-  const fileId = res.data.id!;
-
-  // Grant read access to anyone with the link
   try {
-    await drive.permissions.create({
-      fileId,
-      requestBody: {
-        role: "reader",
-        type: "anyone",
+    const stream = new Readable();
+    stream.push(buffer);
+    stream.push(null);
+
+    const fileMetadata: any = {
+      name: `comprobante-ruta44-${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`,
+    };
+    if (folderId) {
+      fileMetadata.parents = [folderId];
+    }
+
+    const res = await drive.files.create({
+      requestBody: fileMetadata,
+      media: {
+        mimeType,
+        body: stream,
       },
+      fields: "id, webViewLink, webContentLink",
     });
-  } catch (permErr) {
-    console.warn("[googleDrive] Warning making file public:", permErr);
+
+    const fileId = res.data.id!;
+
+    // Grant read access to anyone with the link
+    try {
+      await drive.permissions.create({
+        fileId,
+        requestBody: {
+          role: "reader",
+          type: "anyone",
+        },
+      });
+    } catch (permErr) {
+      console.warn("[googleDrive] Warning making file public:", permErr);
+    }
+
+    const webViewLink = res.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
+
+    return {
+      webViewLink,
+      fileId,
+    };
+  } catch (err: any) {
+    console.error("[googleDrive] Error uploading file to Google Drive. Falling back to data URI:", err?.message || err);
+    // Safe fallback so checkout is never interrupted even if Drive is not configured
+    const base64 = buffer.toString("base64");
+    const dataUrl = `data:${mimeType};base64,${base64}`;
+    return {
+      webViewLink: dataUrl,
+      fileId: `fallback-receipt-${Date.now()}`,
+    };
   }
-
-  const webViewLink = res.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
-
-  return {
-    webViewLink,
-    fileId,
-  };
 }

@@ -1062,13 +1062,49 @@ router.patch("/orders/:orderId", requireAuth, async (req, res, next) => {
     const { orderId } = UpdateOrderStatusParams.parse(req.params);
     const body = UpdateOrderStatusBody.parse(req.body);
     const user = (req as RequestWithUser).user;
-    if (user?.role !== "admin" && user?.role !== "merchant") {
-      res.status(403).json({ error: "No tienes permisos para cambiar el estado del pedido." });
+    if (!user) {
+      res.status(401).json({ error: "No autorizado." });
       return;
     }
 
-    // Multitenancy: Merchant can only update status if order contains their products
-    if (user.role === "merchant") {
+    const [existingOrder] = await db
+      .select()
+      .from(ordersTable)
+      .where(eq(ordersTable.id, orderId))
+      .limit(1);
+
+    if (!existingOrder) {
+      res.status(404).json({ error: "Pedido no encontrado." });
+      return;
+    }
+
+    // Auto-link customerId if null and current user is a customer
+    if (!existingOrder.customerId && user.id) {
+      await db
+        .update(ordersTable)
+        .set({ customerId: user.id })
+        .where(eq(ordersTable.id, existingOrder.id));
+      existingOrder.customerId = user.id;
+    }
+
+    // Role-based status transition checks
+    if (user.role !== "admin" && user.role !== "merchant") {
+      // Customer: can confirm delivery ('delivered') on their own order
+      const isOwner = existingOrder.customerId === user.id;
+      if (!isOwner) {
+        res.status(403).json({ error: "No tienes permisos para modificar este pedido." });
+        return;
+      }
+      if (body.status !== "delivered") {
+        res.status(403).json({ error: "Como cliente solo puedes confirmar la entrega de tu pedido." });
+        return;
+      }
+      if (!["paid", "preparing", "ready"].includes(existingOrder.status)) {
+        res.status(400).json({ error: "El pedido debe haber sido pagado, estar en preparación o listo antes de confirmar su entrega." });
+        return;
+      }
+    } else if (user.role === "merchant") {
+      // Multitenancy: Merchant can only update status if order contains their products
       if (!user.merchantId) {
         res.status(403).json({ error: "No tienes perfil de comerciante asignado." });
         return;
@@ -2014,7 +2050,7 @@ router.get("/admin/analytics", requireAuth, async (req, res, next) => {
     const fifteenDaysAgo = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const paidStatuses = ["paid", "shipped", "delivered"];
+    const paidStatuses = ["paid", "preparing", "ready", "shipped", "delivered"];
 
     // 1. Counts
     const [customersCount, merchantsCount] = await Promise.all([

@@ -19,9 +19,13 @@ import {
   Loader2,
   MapPin,
   MessageCircle,
+  Package,
+  PackageCheck,
   Phone,
   ShieldCheck,
   Star,
+  Store,
+  Truck,
   X,
   XCircle,
 } from 'lucide-react';
@@ -60,6 +64,7 @@ export default function OrderDetailPage() {
   const [ratingScore, setRatingScore] = useState<number>(5);
   const [ratingComment, setRatingComment] = useState<string>('');
   const [submittingRating, setSubmittingRating] = useState<boolean>(false);
+  const [targetStatusUpdating, setTargetStatusUpdating] = useState<string | null>(null);
 
   const handleRateMerchant = async () => {
     if (!ratingScore) return;
@@ -115,19 +120,41 @@ export default function OrderDetailPage() {
 
   const order = query.data;
   const isMerchantOrAdmin = currentUser?.role === 'merchant' || currentUser?.role === 'admin';
-  const canConfirm = order.status === 'ready';
+  const canConfirm = order.status === 'ready' || (order.status === 'preparing' && !isMerchantOrAdmin);
 
-  const confirmDelivery = () => {
+  const handleUpdateStatus = (newStatus: 'preparing' | 'ready' | 'delivered') => {
+    setTargetStatusUpdating(newStatus);
     updateStatus.mutate(
-      { orderId: order.id, data: { status: 'delivered' } },
+      { orderId: order.id, data: { status: newStatus } },
       {
         onSuccess: (updated) => {
           client.setQueryData(getGetOrderQueryKey(order.id), updated);
           client.invalidateQueries({ queryKey: getListOrdersQueryKey() });
-          setNotice({ tone: 'success', text: 'Entrega confirmada. Gracias por usar Ruta 44.' });
+          const messages: Record<string, string> = {
+            preparing: 'Pedido en preparación (Paso 3). El cliente ya puede ver el avance.',
+            ready: 'Pedido marcado como Listo para retirar / entregar (Paso 4).',
+            delivered: '¡Pedido confirmado como entregado! (Paso 5).',
+          };
+          setNotice({
+            tone: 'success',
+            text: messages[newStatus] || `Estado cambiado a ${statusLabel(newStatus)}.`,
+          });
+        },
+        onError: (err: any) => {
+          setNotice({
+            tone: 'error',
+            text: err?.message || 'No se pudo actualizar el estado del pedido.',
+          });
+        },
+        onSettled: () => {
+          setTargetStatusUpdating(null);
         },
       },
     );
+  };
+
+  const confirmDelivery = () => {
+    handleUpdateStatus('delivered');
   };
 
   const handleConfirmPayment = async (paymentId: string) => {
@@ -469,6 +496,224 @@ export default function OrderDetailPage() {
         </div>
       )}
 
+      {/* SECTION 3.5: MERCHANT ORDER LIFECYCLE MANAGEMENT (Steps 3, 4 & 5) */}
+      {isMerchantOrAdmin && order.status !== 'pending_payment' && order.status !== 'cancelled' && (
+        <div className="mt-7 rounded-2xl border-2 border-accent/40 bg-card p-6 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-white shadow-xs">
+                <PackageCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-wider text-accent font-bold">
+                  Panel de Despacho del Comercio
+                </span>
+                <h3 className="font-display text-xl font-bold">Control de Pasos del Pedido</h3>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Estado actual:</span>
+              <Badge className={`border px-3 py-1 text-xs ${statusClass(order.status)}`}>
+                {statusLabel(order.status)}
+              </Badge>
+            </div>
+          </div>
+
+          <p className="mt-3 text-xs text-muted-foreground">
+            Avanza los pasos para notificar al cliente en tiempo real sobre la preparación y entrega de sus repuestos:
+          </p>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-3">
+            {/* PASO 3: PREPARANDO */}
+            <div
+              className={`flex flex-col justify-between rounded-xl border p-4 transition ${
+                order.status === 'preparing'
+                  ? 'border-accent bg-accent/5 ring-2 ring-accent/30'
+                  : currentIndex > 2
+                  ? 'border-emerald-500/30 bg-emerald-500/5'
+                  : 'border-border bg-card'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-accent">Paso 3</span>
+                  {currentIndex > 2 ? (
+                    <Badge variant="outline" className="border-emerald-500 text-emerald-600 text-[10px] gap-1 py-0">
+                      <Check className="h-3 w-3" /> Listo
+                    </Badge>
+                  ) : order.status === 'preparing' ? (
+                    <Badge className="bg-accent text-white text-[10px] py-0">En progreso</Badge>
+                  ) : null}
+                </div>
+                <h4 className="mt-2 font-display text-base font-bold">3. Preparando</h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Alistando y embalando repuestos en el almacén o mostrador.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={order.status === 'preparing' ? 'secondary' : order.status === 'paid' ? 'default' : 'outline'}
+                className="mt-4 w-full text-xs font-semibold"
+                disabled={targetStatusUpdating !== null || order.status === 'delivered'}
+                onClick={() => handleUpdateStatus('preparing')}
+                data-testid="button-step-preparing"
+              >
+                {targetStatusUpdating === 'preparing' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                ) : (
+                  <Clock className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                <span>{order.status === 'preparing' ? 'En Preparación ✓' : '3. Marcar Preparando'}</span>
+              </Button>
+            </div>
+
+            {/* PASO 4: LISTO PARA RETIRAR / ENTREGAR */}
+            <div
+              className={`flex flex-col justify-between rounded-xl border p-4 transition ${
+                order.status === 'ready'
+                  ? 'border-accent bg-accent/5 ring-2 ring-accent/30'
+                  : currentIndex > 3
+                  ? 'border-emerald-500/30 bg-emerald-500/5'
+                  : 'border-border bg-card'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-accent">Paso 4</span>
+                  {currentIndex > 3 ? (
+                    <Badge variant="outline" className="border-emerald-500 text-emerald-600 text-[10px] gap-1 py-0">
+                      <Check className="h-3 w-3" /> Listo
+                    </Badge>
+                  ) : order.status === 'ready' ? (
+                    <Badge className="bg-accent text-white text-[10px] py-0">Listo para entrega</Badge>
+                  ) : null}
+                </div>
+                <h4 className="mt-2 font-display text-base font-bold">4. Listo para retirar</h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Repuesto listo en tienda para retiro o disponible para el delivery.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={order.status === 'ready' ? 'secondary' : order.status === 'preparing' ? 'default' : 'outline'}
+                className="mt-4 w-full text-xs font-semibold"
+                disabled={targetStatusUpdating !== null || order.status === 'delivered'}
+                onClick={() => handleUpdateStatus('ready')}
+                data-testid="button-step-ready"
+              >
+                {targetStatusUpdating === 'ready' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                ) : (
+                  <Store className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                <span>{order.status === 'ready' ? 'Listo en Local ✓' : '4. Marcar Listo para Retiro'}</span>
+              </Button>
+            </div>
+
+            {/* PASO 5: ENTREGADO */}
+            <div
+              className={`flex flex-col justify-between rounded-xl border p-4 transition ${
+                order.status === 'delivered'
+                  ? 'border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30'
+                  : 'border-border bg-card'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-emerald-600">Paso 5</span>
+                  {order.status === 'delivered' && (
+                    <Badge className="bg-emerald-600 text-white text-[10px] py-0">Entregado</Badge>
+                  )}
+                </div>
+                <h4 className="mt-2 font-display text-base font-bold">5. Entregado</h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Piezas entregadas al cliente satisfactoriamente.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={order.status === 'delivered' ? 'secondary' : 'default'}
+                className={`mt-4 w-full text-xs font-semibold ${
+                  order.status !== 'delivered' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : ''
+                }`}
+                disabled={targetStatusUpdating !== null || order.status === 'delivered'}
+                onClick={() => handleUpdateStatus('delivered')}
+                data-testid="button-step-delivered"
+              >
+                {targetStatusUpdating === 'delivered' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                <span>{order.status === 'delivered' ? 'Entregado con Éxito ✓' : '5. Marcar como Entregado'}</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 3.6: CUSTOMER STATUS TRACKING & CONFIRM DELIVERY ACTION */}
+      {!isMerchantOrAdmin && order.status !== 'pending_payment' && order.status !== 'cancelled' && (
+        <div className="mt-7">
+          {order.status === 'preparing' && (
+            <div className="rounded-2xl border border-accent/40 bg-accent/5 p-5 shadow-xs">
+              <div className="flex items-start gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-white shrink-0 mt-0.5">
+                  <Package className="h-5 w-5" />
+                </div>
+                <div>
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-accent font-bold">
+                    Paso 3: En Proceso
+                  </span>
+                  <h3 className="font-display text-lg font-bold">El comercio está preparando tus repuestos</h3>
+                  <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                    Tus piezas están siendo verificadas y embaladas en la tienda. Tan pronto estén listas para que pases a retirarlas o salgan en delivery, verás habilitado el botón para confirmar la recepción.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {order.status === 'ready' && (
+            <div className="rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/5 p-6 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-600 text-white shrink-0 mt-0.5">
+                    <Store className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-800 dark:text-emerald-300 font-bold">
+                      Paso 4: ¡Listo para Entrega!
+                    </span>
+                    <h3 className="font-display text-lg font-bold">Tus repuestos están listos para retirar o recibir</h3>
+                    <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                      Pasa por el local del comercio o recíbelos si coordinaste delivery. Cuando ya tengas las piezas en mano, confirma aquí la entrega para finalizar tu pedido:
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shrink-0 px-5 py-3 h-auto shadow-sm"
+                  disabled={targetStatusUpdating !== null}
+                  onClick={() => handleUpdateStatus('delivered')}
+                  data-testid="button-customer-confirm-delivered"
+                >
+                  {targetStatusUpdating === 'delivered' ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                  )}
+                  <span>Confirmar que ya recibí mi pedido</span>
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* SECTION 4: UNPAID ORDER REMINDER (If no payment reported) */}
       {!order.payment && order.status === 'pending_payment' && (
         <div className="mt-7 rounded-2xl border border-border bg-card p-5">
@@ -742,20 +987,37 @@ export default function OrderDetailPage() {
             )}
           </div>
 
-          {canConfirm && (
+          {!isMerchantOrAdmin && (order.status === 'ready' || order.status === 'preparing') && (
             <Button
               type="button"
-              className="mt-6 w-full"
-              disabled={updateStatus.isPending}
-              onClick={confirmDelivery}
+              className="mt-6 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+              disabled={targetStatusUpdating !== null}
+              onClick={() => handleUpdateStatus('delivered')}
               data-testid="button-confirm-delivery"
             >
-              {updateStatus.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+              {targetStatusUpdating === 'delivered' ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
               ) : (
-                <CheckCircle2 className="h-4 w-4" />
+                <CheckCircle2 className="h-4 w-4 mr-1.5" />
               )}
-              <span>Confirmar entrega</span>
+              <span>Confirmar que recibí mi pedido</span>
+            </Button>
+          )}
+
+          {isMerchantOrAdmin && order.status === 'ready' && (
+            <Button
+              type="button"
+              className="mt-6 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+              disabled={targetStatusUpdating !== null}
+              onClick={() => handleUpdateStatus('delivered')}
+              data-testid="button-merchant-confirm-delivery"
+            >
+              {targetStatusUpdating === 'delivered' ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 mr-1.5" />
+              )}
+              <span>Marcar como Entregado</span>
             </Button>
           )}
 

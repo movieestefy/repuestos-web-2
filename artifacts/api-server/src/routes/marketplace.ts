@@ -2192,14 +2192,37 @@ router.get("/admin/analytics", requireAuth, async (req, res, next) => {
 
     res.json({
       revenue,
-      totalCustomers: Number(customersCount[0]?.value ?? 0),
-      totalMerchants: Number(merchantsCount[0]?.value ?? 0),
+      totalCustomers: isMerchantUser ? 0 : Number(customersCount[0]?.value ?? 0),
+      totalMerchants: isMerchantUser ? 0 : Number(merchantsCount[0]?.value ?? 0),
       totalOrders: totalOrdersCount,
       deliveryPercentage,
       pickupPercentage,
       topSoldProducts,
       leastSoldProducts,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==========================================
+// Merchants Directory List (for Admin assigning sales)
+// ==========================================
+
+router.get("/merchants", requireAuth, async (req, res, next) => {
+  try {
+    const merchants = await db
+      .select({
+        id: merchantsTable.id,
+        name: merchantsTable.name,
+        businessName: merchantsTable.businessName,
+        city: merchantsTable.city,
+      })
+      .from(merchantsTable)
+      .where(eq(merchantsTable.isVisible, true))
+      .orderBy(merchantsTable.name);
+
+    res.json(merchants);
   } catch (error) {
     next(error);
   }
@@ -2253,7 +2276,47 @@ router.get("/part-requests", requireAuth, async (req, res, next) => {
       .where(filters.length ? and(...filters) : undefined)
       .orderBy(desc(partRequestsTable.createdAt));
 
-    res.json(requests);
+    // PRIVACY & MULTITENANCY ISOLATION:
+    // Merchants MUST NOT see customer phone numbers or customer personal contacts.
+    // They only see the requested spare part details to communicate via Admin WhatsApp.
+    if (user.role === "merchant" && !isMaster(user)) {
+      const sanitized = requests.map((r) => ({
+        id: r.id,
+        partDescription: r.partDescription,
+        motorcycleModel: r.motorcycleModel,
+        status: r.status,
+        createdAt: r.createdAt,
+        customerName: "Cliente Ruta 44",
+        contactPhone: "[Oculto - Vía Admin]",
+        assignedMerchantId: r.assignedMerchantId,
+        saleAmountUsd: r.assignedMerchantId === user.merchantId ? r.saleAmountUsd : null,
+      }));
+      res.json(sanitized);
+      return;
+    }
+
+    // Admin view: enrich with merchant business name if already assigned
+    const assignedIds = Array.from(
+      new Set(requests.map((r) => r.assignedMerchantId).filter(Boolean))
+    ) as string[];
+
+    let merchantMap = new Map<string, string>();
+    if (assignedIds.length > 0) {
+      const merchants = await db
+        .select({ id: merchantsTable.id, name: merchantsTable.name, businessName: merchantsTable.businessName })
+        .from(merchantsTable)
+        .where(inArray(merchantsTable.id, assignedIds));
+      for (const m of merchants) {
+        merchantMap.set(m.id, m.businessName || m.name);
+      }
+    }
+
+    const enriched = requests.map((r) => ({
+      ...r,
+      merchantName: r.assignedMerchantId ? merchantMap.get(r.assignedMerchantId) || null : null,
+    }));
+
+    res.json(enriched);
   } catch (error) {
     next(error);
   }
@@ -2268,24 +2331,115 @@ router.patch("/part-requests/:requestId", requireAuth, async (req, res, next) =>
     }
 
     const { requestId } = req.params;
-    const { status } = req.body;
+    const { status, merchantId, saleAmountUsd } = req.body;
     if (!["pending", "contacted", "resolved"].includes(status)) {
       res.status(400).json({ error: "Estado inválido. Opciones válidas: pending, contacted, resolved." });
       return;
     }
 
-    const [updated] = await db
-      .update(partRequestsTable)
-      .set({ status })
-      .where(eq(partRequestsTable.id, String(requestId)))
-      .returning();
+    // Only Admin Master can attribute sales or resolve directly
+    if (user.role === "merchant" && !isMaster(user)) {
+      res.status(403).json({
+        error: "Los comerciantes deben coordinar la resolución y cotización del repuesto directamente por WhatsApp con el Administrador.",
+      });
+      return;
+    }
 
-    if (!updated) {
+    const [existingRequest] = await db
+      .select()
+      .from(partRequestsTable)
+      .where(eq(partRequestsTable.id, String(requestId)))
+      .limit(1);
+
+    if (!existingRequest) {
       res.status(404).json({ error: "Solicitud no encontrada." });
       return;
     }
 
-    res.json(updated);
+    // When Admin marks request as resolved and attributes it to a merchant:
+    // Automatically creates an ad-hoc product and a delivered order for that merchant,
+    // so it counts towards the merchant's sales metrics as a direct web sale.
+    let createdOrderId: string | null = null;
+    if (status === "resolved" && merchantId && Number(saleAmountUsd) > 0) {
+      const parsedUsd = Math.round(Number(saleAmountUsd) * 100) / 100;
+
+      const [todayRate] = await db
+        .select()
+        .from(exchangeRatesTable)
+        .where(eq(exchangeRatesTable.effectiveDate, today()))
+        .limit(1);
+      const rateVal = todayRate ? Number(todayRate.rate) : 50;
+      const totalBs = Math.round(parsedUsd * rateVal * 100) / 100;
+
+      const [merchant] = await db
+        .select()
+        .from(merchantsTable)
+        .where(eq(merchantsTable.id, String(merchantId)))
+        .limit(1);
+
+      const merchantLabel = merchant?.businessName || merchant?.name || "Comercio Aliado";
+
+      // Ad-hoc product for the merchant
+      const [directProduct] = await db
+        .insert(productsTable)
+        .values({
+          merchantId: String(merchantId),
+          name: existingRequest.partDescription,
+          sku: `SOL-${existingRequest.id.slice(0, 6).toUpperCase()}`,
+          category: "Solicitud de Repuesto",
+          description: `Venta directa de repuesto para ${existingRequest.motorcycleModel}`,
+          priceUsd: parsedUsd,
+          stock: 0,
+          imageUrl: null,
+          isVisible: false,
+          condition: "new",
+        })
+        .returning();
+
+      // Delivered direct order
+      const [directOrder] = await db
+        .insert(ordersTable)
+        .values({
+          customerName: existingRequest.customerName,
+          customerPhone: existingRequest.contactPhone,
+          status: "delivered",
+          totalUsd: parsedUsd,
+          totalBs: totalBs,
+          exchangeRate: rateVal,
+          deliveryCity: merchant?.city || "Barinas",
+          pickupNotes: `Venta directa por solicitud de repuesto atendida por ${merchantLabel}`,
+        })
+        .returning();
+
+      createdOrderId = directOrder.id;
+
+      // Order item
+      await db.insert(orderItemsTable).values({
+        orderId: directOrder.id,
+        productId: directProduct.id,
+        productName: existingRequest.partDescription,
+        quantity: 1,
+        unitPriceUsd: parsedUsd,
+        subtotalUsd: parsedUsd,
+      });
+    }
+
+    const updateData: any = { status };
+    if (merchantId) updateData.assignedMerchantId = String(merchantId);
+    if (saleAmountUsd !== undefined && Number(saleAmountUsd) > 0) {
+      updateData.saleAmountUsd = Number(saleAmountUsd);
+    }
+
+    const [updated] = await db
+      .update(partRequestsTable)
+      .set(updateData)
+      .where(eq(partRequestsTable.id, String(requestId)))
+      .returning();
+
+    res.json({
+      ...updated,
+      createdOrderId,
+    });
   } catch (error) {
     next(error);
   }

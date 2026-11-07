@@ -1,4 +1,4 @@
-import { count, eq } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import {
   db,
   deliveryLocationsTable,
@@ -15,6 +15,16 @@ const masterEmail = "alexaelperdomo2410@gmail.com";
 const masterInitialPassword = process.env.MASTER_INITIAL_PASSWORD || "";
 
 export async function ensureMarketplaceSeed() {
+  try {
+    await db.execute(sql`
+      ALTER TABLE "part_requests" ADD COLUMN IF NOT EXISTS "assigned_merchant_id" text;
+      ALTER TABLE "part_requests" ADD COLUMN IF NOT EXISTS "sale_amount_usd" numeric(14, 2);
+    `);
+  } catch (err) {
+    // Non-fatal if table doesn't exist yet or columns already exist
+    console.warn("Notice: part_requests migration check:", err);
+  }
+
   const [master] = await db.select().from(usersTable).where(eq(usersTable.email, masterEmail)).limit(1);
   if (!master) {
     await db.insert(usersTable).values({

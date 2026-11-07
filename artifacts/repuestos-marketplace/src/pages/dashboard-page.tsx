@@ -19,6 +19,8 @@ import {
   ExternalLink,
   Flame,
   LayoutDashboard,
+  Loader2,
+  MessageCircle,
   MessageSquare,
   PackageX,
   Phone,
@@ -37,6 +39,14 @@ import {
 } from 'lucide-react';
 import { Link } from 'wouter';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ErrorState } from '@/components/shared/error-state';
 import { PageLoader } from '@/components/shared/page-loader';
 import { OrderRow } from '@/components/shared/order-row';
@@ -144,13 +154,29 @@ interface PartRequest {
   partDescription: string;
   motorcycleModel: string;
   status: 'pending' | 'contacted' | 'resolved';
+  assignedMerchantId?: string | null;
+  saleAmountUsd?: number | null;
+  merchantName?: string | null;
   createdAt: string;
+}
+
+interface MerchantOption {
+  id: string;
+  name: string;
+  businessName?: string | null;
+  city?: string | null;
 }
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'analytics' | 'requests' | 'orders'>('analytics');
   const [requestStatusFilter, setRequestStatusFilter] = useState<'all' | 'pending' | 'contacted' | 'resolved'>('all');
+
+  // Modal state for Admin assigning sale to a merchant
+  const [resolvingRequest, setResolvingRequest] = useState<PartRequest | null>(null);
+  const [selectedMerchantId, setSelectedMerchantId] = useState<string>('');
+  const [salePriceUsd, setSalePriceUsd] = useState<string>('');
+  const [resolvingLoading, setResolvingLoading] = useState<boolean>(false);
 
   const { data: user } = useGetCurrentUser({
     query: { queryKey: getGetCurrentUserQueryKey(), retry: false },
@@ -189,20 +215,99 @@ export default function DashboardPage() {
     },
   });
 
+  const { data: merchantsList = [] } = useQuery<MerchantOption[]>({
+    queryKey: ['/api/merchants'],
+    queryFn: async () => {
+      const res = await fetch('/api/merchants');
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: Boolean(isAdmin),
+  });
+
+  const { data: paymentReceiver } = useQuery<{ phone?: string }>({
+    queryKey: ['/api/payment-receiver'],
+    queryFn: async () => {
+      const res = await fetch('/api/payment-receiver');
+      if (!res.ok) return {};
+      return res.json();
+    },
+  });
+
   const updateRequestStatus = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: 'pending' | 'contacted' | 'resolved' }) => {
+    mutationFn: async ({
+      id,
+      status,
+      merchantId,
+      saleAmountUsd,
+    }: {
+      id: string;
+      status: 'pending' | 'contacted' | 'resolved';
+      merchantId?: string;
+      saleAmountUsd?: number;
+    }) => {
       const res = await fetch(`/api/part-requests/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, merchantId, saleAmountUsd }),
       });
-      if (!res.ok) throw new Error('Error al actualizar estado.');
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Error al actualizar estado.');
+      }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/part-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/analytics'] });
+      queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
     },
   });
+
+  const handleAdminContactCustomer = (req: PartRequest) => {
+    const cleanPhone = req.contactPhone.replace(/\D/g, '');
+    const waText = encodeURIComponent(
+      `Hola ${req.customerName}, te escribimos de Ruta 44 respecto a tu solicitud del repuesto "${req.partDescription}" para tu moto ${req.motorcycleModel}. ¿Aún lo requieres? Te compartimos precio y disponibilidad.`
+    );
+    const waLink = `https://wa.me/${cleanPhone.startsWith('58') ? cleanPhone : `58${cleanPhone.replace(/^0/, '')}`}?text=${waText}`;
+    window.open(waLink, '_blank');
+  };
+
+  const handleMerchantContactAdmin = (req: PartRequest) => {
+    const merchantName = user?.name || 'Comercio Aliado';
+    const msg = `Hola Ruta 44, soy la tienda ${merchantName} y tengo disponibilidad del repuesto solicitado: "${req.partDescription}" para la moto ${req.motorcycleModel} (Solicitud #${req.id.slice(0, 8).toUpperCase()}). Por favor coordinar con el cliente.`;
+
+    const receiverPhone = paymentReceiver?.phone?.replace(/\D/g, '') || '';
+    const adminUrl = receiverPhone.length >= 7
+      ? `https://wa.me/${receiverPhone.startsWith('58') ? receiverPhone : `58${receiverPhone.replace(/^0/, '')}`}?text=${encodeURIComponent(msg)}`
+      : 'https://wa.me/qr/VALY6ZX5YZLKE1';
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(msg).catch(() => {});
+    }
+
+    window.open(adminUrl, '_blank');
+  };
+
+  const handleConfirmResolveWithSale = async () => {
+    if (!resolvingRequest || !selectedMerchantId || !salePriceUsd) return;
+    setResolvingLoading(true);
+    try {
+      await updateRequestStatus.mutateAsync({
+        id: resolvingRequest.id,
+        status: 'resolved',
+        merchantId: selectedMerchantId,
+        saleAmountUsd: Number(salePriceUsd),
+      });
+      setResolvingRequest(null);
+      setSelectedMerchantId('');
+      setSalePriceUsd('');
+    } catch (err: any) {
+      alert(err?.message || 'Error al asignar la venta a la tienda.');
+    } finally {
+      setResolvingLoading(false);
+    }
+  };
 
   if (summaryQuery.isLoading) return <PageLoader />;
   if (summaryQuery.isError || !summaryQuery.data) {
@@ -370,30 +475,65 @@ export default function DashboardPage() {
           {/* Operational KPIs */}
           <section>
             <p className="font-mono text-[10px] uppercase tracking-widest text-accent">Métricas de Rendimiento</p>
-            <h2 className="mt-1 font-display text-2xl font-bold">KPIs Operativos & Logística</h2>
+            <h2 className="mt-1 font-display text-2xl font-bold">
+              {isAdmin ? 'KPIs Operativos & Logística de Plataforma' : 'Rendimiento y Operaciones de tu Tienda'}
+            </h2>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-card-border bg-card p-5 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                    <Users className="h-5 w-5" />
-                  </span>
-                </div>
-                <p className="mt-4 text-xs text-muted-foreground">Clientes Registrados</p>
-                <p className="mt-1 font-display text-3xl font-bold">{analytics?.totalCustomers ?? '—'}</p>
-                <p className="mt-1 text-xs text-muted-foreground">usuarios compradores activos</p>
-              </div>
+              {isAdmin ? (
+                <>
+                  <div className="rounded-2xl border border-card-border bg-card p-5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                        <Users className="h-5 w-5" />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-xs text-muted-foreground">Clientes Registrados</p>
+                    <p className="mt-1 font-display text-3xl font-bold">{analytics?.totalCustomers ?? '—'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">usuarios compradores activos</p>
+                  </div>
 
-              <div className="rounded-2xl border border-card-border bg-card p-5 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                    <Store className="h-5 w-5" />
-                  </span>
-                </div>
-                <p className="mt-4 text-xs text-muted-foreground">Comercios Aliados</p>
-                <p className="mt-1 font-display text-3xl font-bold">{analytics?.totalMerchants ?? summary.activeMerchants ?? 1}</p>
-                <p className="mt-1 text-xs text-muted-foreground">tiendas y talleres en plataforma</p>
-              </div>
+                  <div className="rounded-2xl border border-card-border bg-card p-5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="grid h-10 w-10 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                        <Store className="h-5 w-5" />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-xs text-muted-foreground">Comercios Aliados</p>
+                    <p className="mt-1 font-display text-3xl font-bold">{analytics?.totalMerchants ?? summary.activeMerchants ?? 1}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">tiendas y talleres en plataforma</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-2xl border border-card-border bg-card p-5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                        <Boxes className="h-5 w-5" />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-xs text-muted-foreground">Pedidos de tu Tienda</p>
+                    <p className="mt-1 font-display text-3xl font-bold">{analytics?.totalOrders ?? summary.recentOrders.length}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">pedidos y ventas procesadas</p>
+                  </div>
+
+                  <div className="rounded-2xl border border-card-border bg-card p-5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="grid h-10 w-10 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                        <Star className="h-5 w-5 fill-amber-500 text-amber-500" />
+                      </span>
+                      <span className="font-mono text-xs font-bold text-amber-600">
+                        {reputation?.totalCount ? `${reputation.totalCount} reseñas` : 'Nuevo'}
+                      </span>
+                    </div>
+                    <p className="mt-4 text-xs text-muted-foreground">Reputación Comercial</p>
+                    <p className="mt-1 font-display text-3xl font-bold">
+                      {reputation?.avgScore ? `${reputation.avgScore.toFixed(1)} / 5` : '5.0 / 5'}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">calificación media de clientes</p>
+                  </div>
+                </>
+              )}
 
               <div className="rounded-2xl border border-card-border bg-card p-5 shadow-xs">
                 <div className="flex items-center justify-between">
@@ -580,22 +720,17 @@ export default function DashboardPage() {
               <thead className="border-b border-border bg-muted/40 font-mono text-[10px] uppercase text-muted-foreground">
                 <tr>
                   <th className="px-5 py-3.5">Fecha</th>
-                  <th className="px-5 py-3.5">Cliente</th>
+                  {isAdmin && <th className="px-5 py-3.5">Cliente</th>}
                   <th className="px-5 py-3.5">Moto</th>
                   <th className="px-5 py-3.5">Repuesto Solicitado</th>
                   <th className="px-5 py-3.5">Estado</th>
-                  <th className="px-5 py-3.5 text-right">Acción Rápida</th>
+                  {isAdmin && <th className="px-5 py-3.5">Venta Atribuida</th>}
+                  <th className="px-5 py-3.5 text-right">{isAdmin ? 'Acciones' : 'Acción con Ruta 44'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {filteredRequests.length ? (
                   filteredRequests.map((req) => {
-                    const cleanPhone = req.contactPhone.replace(/\D/g, '');
-                    const waText = encodeURIComponent(
-                      `Hola ${req.customerName}, te escribimos de Ruta 44 respecto a tu solicitud del repuesto "${req.partDescription}" para tu moto ${req.motorcycleModel}. ¿Aún lo requieres? Te compartimos precio y disponibilidad.`
-                    );
-                    const waLink = `https://wa.me/${cleanPhone.startsWith('58') ? cleanPhone : `58${cleanPhone.replace(/^0/, '')}`}?text=${waText}`;
-
                     return (
                       <tr key={req.id} className="hover:bg-muted/30 transition">
                         <td className="px-5 py-4 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
@@ -606,11 +741,13 @@ export default function DashboardPage() {
                             minute: '2-digit',
                           })}
                         </td>
-                        <td className="px-5 py-4">
-                          <p className="font-semibold text-foreground">{req.customerName}</p>
-                          <p className="font-mono text-[10px] text-muted-foreground">{req.contactPhone}</p>
-                        </td>
-                        <td className="px-5 py-4 font-medium text-foreground">
+                        {isAdmin && (
+                          <td className="px-5 py-4">
+                            <p className="font-semibold text-foreground">{req.customerName}</p>
+                            <p className="font-mono text-[10px] text-muted-foreground">{req.contactPhone}</p>
+                          </td>
+                        )}
+                        <td className="px-5 py-4 font-medium text-foreground whitespace-nowrap">
                           {req.motorcycleModel}
                         </td>
                         <td className="px-5 py-4 max-w-xs">
@@ -634,40 +771,74 @@ export default function DashboardPage() {
                                 : 'Resuelto'}
                           </span>
                         </td>
+                        {isAdmin && (
+                          <td className="px-5 py-4 whitespace-nowrap">
+                            {req.assignedMerchantId ? (
+                              <span className="font-semibold text-emerald-600 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                                ✓ Vendido por: {req.merchantName || 'Tienda'} ({usd(Number(req.saleAmountUsd || 0))})
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground italic text-[11px]">Sin asignar</span>
+                            )}
+                          </td>
+                        )}
                         <td className="px-5 py-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-2">
-                            <a
-                              href={waLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1ebe5d] transition shadow-xs"
-                              title="Contactar al cliente por WhatsApp"
-                              data-testid={`link-wa-request-${req.id}`}
-                            >
-                              <Phone className="h-3.5 w-3.5" />
-                              <span>WhatsApp</span>
-                            </a>
+                            {isAdmin ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdminContactCustomer(req)}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1ebe5d] transition shadow-xs"
+                                  title="Contactar al cliente por WhatsApp con mensaje automático"
+                                  data-testid={`link-wa-request-${req.id}`}
+                                >
+                                  <Phone className="h-3.5 w-3.5" />
+                                  <span>WhatsApp Cliente</span>
+                                </button>
 
-                            {req.status === 'pending' && (
-                              <button
-                                type="button"
-                                onClick={() => updateRequestStatus.mutate({ id: req.id, status: 'contacted' })}
-                                disabled={updateRequestStatus.isPending}
-                                className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary transition"
-                              >
-                                Marcar contactado
-                              </button>
-                            )}
+                                {req.status === 'pending' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => updateRequestStatus.mutate({ id: req.id, status: 'contacted' })}
+                                    disabled={updateRequestStatus.isPending}
+                                    className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:border-primary transition"
+                                  >
+                                    Marcar contactado
+                                  </button>
+                                )}
 
-                            {req.status !== 'resolved' && (
-                              <button
-                                type="button"
-                                onClick={() => updateRequestStatus.mutate({ id: req.id, status: 'resolved' })}
-                                disabled={updateRequestStatus.isPending}
-                                className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition"
-                              >
-                                Resolver
-                              </button>
+                                {req.status !== 'resolved' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setResolvingRequest(req);
+                                      setSelectedMerchantId('');
+                                      setSalePriceUsd('');
+                                    }}
+                                    className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition"
+                                  >
+                                    Asignar Venta a Tienda
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                {req.status !== 'resolved' ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMerchantContactAdmin(req)}
+                                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1ebe5d] transition shadow-xs"
+                                    title="Notificar al Admin de Ruta 44 que tienes este repuesto"
+                                    data-testid={`btn-merchant-contact-admin-${req.id}`}
+                                  >
+                                    <MessageCircle className="h-3.5 w-3.5" />
+                                    <span>Tengo este repuesto (Hablar con Admin)</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-emerald-600 font-semibold text-xs">✓ Resuelto</span>
+                                )}
+                              </>
                             )}
                           </div>
                         </td>
@@ -676,7 +847,7 @@ export default function DashboardPage() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-xs text-muted-foreground">
+                    <td colSpan={isAdmin ? 7 : 5} className="py-12 text-center text-xs text-muted-foreground">
                       No hay solicitudes registradas con este filtro.
                     </td>
                   </tr>
@@ -768,6 +939,84 @@ export default function DashboardPage() {
           </section>
         </div>
       )}
+
+      {/* MODAL: ASIGNAR VENTA A TIENDA Y RESOLVER SOLICITUD (ADMIN) */}
+      <Dialog open={Boolean(resolvingRequest)} onOpenChange={(open) => !open && setResolvingRequest(null)}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Asignar Venta y Resolver Solicitud</DialogTitle>
+            <DialogDescription>
+              Selecciona qué comercio suministró el repuesto y el monto acordado. Se registrará la venta para que compute automáticamente en las métricas de esa tienda.
+            </DialogDescription>
+          </DialogHeader>
+
+          {resolvingRequest && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-xl border border-border bg-muted/40 p-3.5 text-xs">
+                <p className="font-bold text-foreground">{resolvingRequest.partDescription}</p>
+                <p className="text-muted-foreground mt-1">
+                  Moto: <span className="font-semibold text-foreground">{resolvingRequest.motorcycleModel}</span> · Cliente: <span className="font-semibold text-foreground">{resolvingRequest.customerName}</span> ({resolvingRequest.contactPhone})
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground">Comercio que vendió el repuesto *</label>
+                <select
+                  value={selectedMerchantId}
+                  onChange={(e) => setSelectedMerchantId(e.target.value)}
+                  className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option value="">-- Seleccionar tienda o taller --</option>
+                  {merchantsList.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.businessName || m.name} ({m.city || 'Barinas'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground">Monto final acordado de venta (USD $) *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="Ej: 35.00"
+                  value={salePriceUsd}
+                  onChange={(e) => setSalePriceUsd(e.target.value)}
+                  className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setResolvingRequest(null)}
+              disabled={resolvingLoading}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+              disabled={!selectedMerchantId || !salePriceUsd || resolvingLoading}
+              onClick={handleConfirmResolveWithSale}
+            >
+              {resolvingLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 mr-1.5" />
+              )}
+              <span>Registrar Venta y Resolver</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

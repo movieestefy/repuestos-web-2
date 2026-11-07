@@ -156,6 +156,8 @@ export const partRequestsTable = pgTable("part_requests", {
   partDescription: text("part_description").notNull(),
   motorcycleModel: text("motorcycle_model").notNull(),
   status: text("status").notNull().default("pending"), // 'pending' | 'contacted' | 'resolved'
+  assignedMerchantId: text("assigned_merchant_id"),
+  saleAmountUsd: numeric("sale_amount_usd", { precision: 14, scale: 2, mode: "number" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   statusCreatedAtIdx: index("part_requests_status_created_at_idx").on(table.status, table.createdAt),

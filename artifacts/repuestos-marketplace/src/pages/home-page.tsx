@@ -411,7 +411,7 @@ export default function HomePage() {
               <Phone className="h-8 w-8 shrink-0 text-[#25D366]" />
             </div>
             <a
-              href="https://wa.me/qr/VALY6ZX5YZLKE1o"
+              href="https://wa.me/qr/VALY6ZX5YZLKE1"
               target="_blank"
               rel="noreferrer"
               className="mt-6 inline-flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#1ebe5d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#25D366] focus-visible:ring-offset-2"

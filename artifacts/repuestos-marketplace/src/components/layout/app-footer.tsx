@@ -22,6 +22,15 @@ export function AppFooter() {
             <Link href="/" data-testid="link-footer-catalogo">Catálogo</Link>
             <Link href="/orders" data-testid="link-footer-orders">Seguimiento de pedidos</Link>
             <Link href="/cart" data-testid="link-footer-cart">Carrito</Link>
+            <a
+              href="https://wa.me/qr/VALY6ZX5YZLKE1"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#25D366] hover:underline"
+              data-testid="link-footer-whatsapp"
+            >
+              Atención WhatsApp
+            </a>
           </div>
         </div>
         <div>
